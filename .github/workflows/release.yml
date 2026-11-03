@@ -1,0 +1,92 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: node scripts/package.mjs ${{ github.ref_name }}
+      - name: Install PostgreSQL for the smoke test
+        shell: pwsh
+        run: choco install postgresql17 --params '/Password:smoke' -y --no-progress
+      - name: Smoke test the zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pg = (Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory |
+            Sort-Object { [int]$_.Name } -Descending | Select-Object -First 1).FullName + '\bin'
+          $env:PGPASSWORD = 'smoke'
+          & "$pg\psql.exe" -U postgres -h 127.0.0.1 -c "CREATE DATABASE smoke"
+          if ($LASTEXITCODE) { throw 'cannot create database' }
+
+          New-Item -ItemType Directory smoke | Out-Null
+          tar -xf release/app.zip -C smoke
+          if ($LASTEXITCODE) { throw 'extract failed' }
+
+          $env:DATABASE_URL = 'postgresql://postgres:smoke@127.0.0.1:5432/smoke'
+          $env:PORT = '18080'
+          $env:JWT_SECRET = 'x' * 40
+          $env:ADMIN_PASS = 'smoke-test-password'
+          Push-Location smoke
+          try {
+            .\node.exe node_modules\prisma\build\index.js migrate deploy
+            if ($LASTEXITCODE) { throw 'migrate deploy failed' }
+
+            $p = Start-Process .\node.exe -ArgumentList 'dist/main.js' -WorkingDirectory $PWD -PassThru
+            try {
+              $health = $null
+              for ($i = 0; $i -lt 60; $i++) {
+                Start-Sleep 2
+                try {
+                  $health = Invoke-RestMethod http://127.0.0.1:18080/api/health -TimeoutSec 3
+                  break
+                } catch {}
+              }
+              if (-not $health) { throw 'health endpoint never answered' }
+              if ($health.version -ne '${{ github.ref_name }}') {
+                throw "bad health: $($health | ConvertTo-Json -Compress)"
+              }
+
+              $root = Invoke-WebRequest http://127.0.0.1:18080/ -UseBasicParsing -TimeoutSec 5
+              if ($root.StatusCode -ne 200 -or $root.Content -notmatch 'LAN/APP') { throw 'static index failed' }
+
+              $login = Invoke-WebRequest http://127.0.0.1:18080/api/auth/login -Method Post `
+                -ContentType 'application/json' -Body '{"username":"admin","password":"smoke-test-password"}' `
+                -SessionVariable session -UseBasicParsing -TimeoutSec 5
+              if ($login.StatusCode -ne 200) { throw "login failed: $($login.StatusCode)" }
+
+              $anonStatus = 0
+              try {
+                Invoke-WebRequest http://127.0.0.1:18080/api/readings -UseBasicParsing -TimeoutSec 5 | Out-Null
+              } catch {
+                $anonStatus = [int]$_.Exception.Response.StatusCode
+              }
+              if ($anonStatus -ne 401) { throw "expected 401 without a cookie, got $anonStatus" }
+
+              $created = Invoke-RestMethod http://127.0.0.1:18080/api/readings -Method Post `
+                -ContentType 'application/json' -Body '{"value":1.5}' -WebSession $session -TimeoutSec 5
+              if ($created.value -ne 1.5) { throw 'reading was not created' }
+            } finally {
+              Stop-Process $p -Force -ErrorAction SilentlyContinue
+            }
+          } finally {
+            Pop-Location
+          }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/app.zip
+            release/app.zip.sha256

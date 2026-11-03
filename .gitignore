@@ -1,0 +1,9 @@
+node_modules
+dist
+release
+.env
+apps/api/src/generated
+apps/api/public
+*.log
+Thumbs.db
+.DS_Store
