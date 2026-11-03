@@ -29,6 +29,18 @@ jobs:
           $pg = (Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory |
             Sort-Object { [int]$_.Name } -Descending | Select-Object -First 1).FullName + '\bin'
           $env:PGPASSWORD = 'smoke'
+
+          $ready = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            & "$pg\pg_isready.exe" -U postgres -h 127.0.0.1 -p 5432 | Out-Null
+            if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+            Start-Sleep 2
+          }
+          if (-not $ready) {
+            Get-Service *postgres* | Format-Table -AutoSize | Out-String | Write-Host
+            throw 'PostgreSQL did not start'
+          }
+
           & "$pg\psql.exe" -U postgres -h 127.0.0.1 -c "CREATE DATABASE smoke"
           if ($LASTEXITCODE) { throw 'cannot create database' }
 
