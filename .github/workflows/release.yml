@@ -26,29 +26,59 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $pg = (Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory |
-            Sort-Object { [int]$_.Name } -Descending | Select-Object -First 1).FullName + '\bin'
-          $env:PGPASSWORD = 'smoke'
+          $dbPass = 'smokepassword123'
+          $env:PGPASSWORD = $dbPass
 
-          $ready = $false
-          for ($i = 0; $i -lt 60; $i++) {
-            & "$pg\pg_isready.exe" -U postgres -h 127.0.0.1 -p 5432 | Out-Null
-            if ($LASTEXITCODE -eq 0) { $ready = $true; break }
-            Start-Sleep 2
-          }
-          if (-not $ready) {
+          function Wait-Pg([string]$bin) {
+            for ($i = 0; $i -lt 60; $i++) {
+              & "$bin\pg_isready.exe" -U postgres -h 127.0.0.1 -p 5432 | Out-Null
+              if ($LASTEXITCODE -eq 0) { return }
+              Start-Sleep 2
+            }
             Get-Service *postgres* | Format-Table -AutoSize | Out-String | Write-Host
             throw 'PostgreSQL did not start'
           }
 
-          & "$pg\psql.exe" -U postgres -h 127.0.0.1 -c "CREATE DATABASE smoke"
+          # Find the service the Chocolatey package started instead of assuming a version dir.
+          $svc = Get-CimInstance Win32_Service | Where-Object {
+            $_.Name -like 'postgresql*' -and $_.State -eq 'Running'
+          } | Select-Object -First 1
+          if (-not $svc) { throw 'no running PostgreSQL service' }
+          $svcName = $svc.Name
+          $pgctl = if ($svc.PathName -match '^"([^"]+)"') { $Matches[1] } else { ($svc.PathName -split ' ')[0] }
+          $pg = Split-Path $pgctl
+          if ($svc.PathName -match '-D\s+"([^"]+)"') {
+            $data = $Matches[1]
+          } else {
+            throw "cannot find the data directory in: $($svc.PathName)"
+          }
+          Wait-Pg $pg
+
+          & "$pg\psql.exe" -U postgres -h 127.0.0.1 -c 'SELECT version()' | Out-Null
+          if ($LASTEXITCODE) {
+            # A local security policy can override the installer's --superpassword. Add a
+            # temporary trust rule, set the password, then restore pg_hba.conf.
+            Write-Host 'resetting the postgres password through a temporary trust rule'
+            Copy-Item "$data\pg_hba.conf" "$data\pg_hba.conf.ci" -Force
+            $trusted = "host all all 127.0.0.1/32 trust`n" + (Get-Content "$data\pg_hba.conf" -Raw)
+            Set-Content "$data\pg_hba.conf" $trusted -Encoding ascii -NoNewline
+            Restart-Service $svcName -Force
+            Wait-Pg $pg
+            & "$pg\psql.exe" -U postgres -h 127.0.0.1 -c "ALTER USER postgres PASSWORD '$dbPass'"
+            if ($LASTEXITCODE) { throw 'could not reset the postgres password' }
+            Move-Item "$data\pg_hba.conf.ci" "$data\pg_hba.conf" -Force
+            Restart-Service $svcName -Force
+            Wait-Pg $pg
+          }
+
+          & "$pg\psql.exe" -U postgres -h 127.0.0.1 -c 'CREATE DATABASE smoke'
           if ($LASTEXITCODE) { throw 'cannot create database' }
 
           New-Item -ItemType Directory smoke | Out-Null
           tar -xf release/app.zip -C smoke
           if ($LASTEXITCODE) { throw 'extract failed' }
 
-          $env:DATABASE_URL = 'postgresql://postgres:smoke@127.0.0.1:5432/smoke'
+          $env:DATABASE_URL = 'postgresql://postgres:smokepassword123@127.0.0.1:5432/smoke'
           $env:PORT = '18080'
           $env:JWT_SECRET = 'x' * 40
           $env:ADMIN_PASS = 'smoke-test-password'

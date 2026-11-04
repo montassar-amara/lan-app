@@ -11,15 +11,15 @@ Everything below runs in an **elevated cmd** (`Win+X`, "Terminal (Admin)") on th
 | App root | `C:\myapp` |
 | Windows service | `myapp` |
 | PostgreSQL role / database | `myapp` / `myapp` |
-| Public hostname | `<YOUR_DOMAIN>` (DuckDNS) |
+| Public hostname | `olive-press.duckdns.org` (DuckDNS) |
 | Let's Encrypt email | `<ACME_EMAIL>` |
-| DuckDNS subdomain | `<DUCKDNS_SUB>` |
+| DuckDNS subdomain | `olive-press` |
 | Target LAN IP | `192.168.1.10` |
 | PostgreSQL service | `PG_SERVICE` (find it in step 3) |
 | PostgreSQL superuser password | `<PG_SUPER_PASS>` (you choose it in step 3) |
 | App database password | `<DB_PASS>` (generate it in step 2) |
 
-`<YOUR_DOMAIN>` is `<DUCKDNS_SUB>.duckdns.org`. Never commit `DB_PASS`, `PG_SUPER_PASS`,
+The DuckDNS hostname is `olive-press.duckdns.org`. Never commit `DB_PASS`, `PG_SUPER_PASS`,
 `JWT_SECRET` or the DuckDNS token; they live only on the PC.
 
 ## 1. Folders and first install
@@ -155,7 +155,7 @@ service cannot read the release, grant read access:
 	email <ACME_EMAIL>
 }
 
-<YOUR_DOMAIN> {
+olive-press.duckdns.org {
 	encode zstd gzip
 	header {
 		Strict-Transport-Security "max-age=31536000"
@@ -203,14 +203,14 @@ sc config w32time start= auto
 The WAN address is dynamic, so keep the DuckDNS A record updated every 5 minutes:
 
 ```bat
-echo curl -s "https://www.duckdns.org/update?domains=<DUCKDNS_SUB>&token=<DUCKDNS_TOKEN>&ip=" > C:\myapp\duck.cmd
+echo curl -s "https://www.duckdns.org/update?domains=olive-press&token=<DUCKDNS_TOKEN>&ip=" > C:\myapp\duck.cmd
 schtasks /create /f /tn duckdns /sc minute /mo 5 /ru SYSTEM /tr C:\myapp\duck.cmd
 ```
 
 `duck.cmd` contains the token: do not copy it into the repo. Test it once with
 `type C:\myapp\duck.cmd` then run `C:\myapp\duck.cmd` (expected output `OK`).
 
-The DuckDNS hostname must be `<YOUR_DOMAIN>`; Caddy then obtains the certificate automatically on
+The DuckDNS hostname must be `olive-press.duckdns.org`; Caddy then obtains the certificate automatically on
 ports 80/443.
 
 ## 9. Router and BIOS
@@ -248,7 +248,7 @@ between the update and the rollback is lost. Keep the health-check window short.
 | Check | How | Expected |
 |---|---|---|
 | LAN works | Open `http://192.168.1.10:8080` from another LAN device | Login page, can log in |
-| Internet works | Phone on **mobile data**, open `https://<YOUR_DOMAIN>` | Valid HTTPS certificate, login works |
+| Internet works | Phone on **mobile data**, open `https://olive-press.duckdns.org` | Valid HTTPS certificate, login works |
 | Offline works | Unplug the router's internet cable, open the LAN URL | Still works, data still saves |
 | Database not exposed | From another LAN device: `Test-NetConnection 192.168.1.10 -Port 5432` | Fails |
 | Auto-update | Release `v1.0.1`, then wait an hour or run `C:\myapp\update.ps1` | `current\VERSION` and `/api/health` show `v1.0.1`; `backups\pre-v1.0.1.dump` exists |
