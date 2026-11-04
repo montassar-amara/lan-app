@@ -12,7 +12,7 @@ Everything below runs in an **elevated cmd** (`Win+X`, "Terminal (Admin)") on th
 | Windows service | `myapp` |
 | PostgreSQL role / database | `myapp` / `myapp` |
 | Public hostname | `olive-press.duckdns.org` (DuckDNS) |
-| Let's Encrypt email | `<ACME_EMAIL>` |
+| ACME account email | optional — see step 6 |
 | DuckDNS subdomain | `olive-press` |
 | Target LAN IP | `192.168.1.10` |
 | PostgreSQL service | `PG_SERVICE` (find it in step 3) |
@@ -152,7 +152,9 @@ service cannot read the release, grant read access:
 
 ```
 {
-	email <ACME_EMAIL>
+	# Optional ACME account contact. Let's Encrypt stopped storing account
+	# addresses and sending expiry notices in June 2025, so this is not required.
+	# email you@example.com
 }
 
 olive-press.duckdns.org {
@@ -168,6 +170,11 @@ olive-press.duckdns.org {
 	reverse_proxy 127.0.0.1:8080
 }
 ```
+
+The `email` line is optional. Let's Encrypt stopped storing ACME contact addresses and sending
+certificate-expiry notices in June 2025; Caddy obtains and renews certificates without it. If you
+want a contact address anyway, use one you control and keep it only in `C:\myapp\Caddyfile` — this
+repository is public, so do not commit a personal email address here.
 
 The `@lanonly` prefixes are reserved for future write/admin/ingestion routes: they stay reachable
 on the LAN at `:8080` but return 404 from the internet.
